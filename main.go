@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+var (
+	buildkiteAuthToken string
+	buildkiteURL       string
+)
+
 // https://mholt.github.io/json-to-go/ is awesome
 type VSTSPayload struct {
 	SubscriptionID string `json:"subscriptionId"`
@@ -228,32 +233,31 @@ func vstsHandler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if len(payload.Resource.Commits) == 0 {
-		log.Printf("Payload with no commits: %#v\n", string(reqBody))
-		http.Error(resp, "No commits data found in request", http.StatusBadRequest)
-		return
-	}
-
-	buildkiteURL := os.Getenv("BUILDKITE_URL")
-	if buildkiteURL == "" {
-		log.Fatal("Please specify BUILDKITE_URL")
-	}
-
-	buildkiteAuthToken := os.Getenv("BUILDKITE_AUTH_TOKEN")
-	if buildkiteAuthToken == "" {
-		log.Fatal("Please specify BUILDKITE_AUTH_TOKEN")
-	}
-
 	buildkitePayload := BuildkitePayload{}
-	buildkitePayload.Commit = payload.Resource.Commits[0].CommitID
+	buildkitePayload.Commit = payload.Resource.RefUpdates[0].NewObjectID
 
-	refsUpdates := payload.Resource.RefUpdates[0].Name
-	// Deriving branch from refsUpdates
-	buildkitePayload.Branch = strings.Split(refsUpdates, "/")[2]
+	refsUpdatesName := payload.Resource.RefUpdates[0].Name
+	buildkitePayload.Branch = strings.Split(refsUpdatesName, "/")[2]
 
-	buildkitePayload.Author.Name = payload.Resource.Commits[0].Author.Name
-	buildkitePayload.Author.Email = payload.Resource.Commits[0].Author.Email
-	buildkitePayload.Message = payload.Resource.Commits[0].Comment
+	var (
+		authorName    string
+		authorEmail   string
+		commitMessage string
+	)
+	if buildkitePayload.Branch != "master" {
+		authorName = payload.Resource.Commits[0].Author.Name
+		authorEmail = payload.Resource.Commits[0].Author.Email
+		commitMessage = payload.Resource.Commits[0].Comment
+	} else {
+		authorName = payload.Resource.PushedBy.DisplayName
+		authorEmail = payload.Resource.PushedBy.UniqueName
+		commitMessage = payload.DetailedMessage.Markdown
+
+	}
+
+	buildkitePayload.Author.Name = authorName
+	buildkitePayload.Author.Email = authorEmail
+	buildkitePayload.Message = commitMessage
 
 	buildkitePayloadString, err := json.Marshal(buildkitePayload)
 
@@ -290,5 +294,14 @@ func setupServer() {
 }
 
 func main() {
+	buildkiteURL = os.Getenv("BUILDKITE_URL")
+	if buildkiteURL == "" {
+		log.Fatal("Please specify BUILDKITE_URL")
+	}
+
+	buildkiteAuthToken = os.Getenv("BUILDKITE_AUTH_TOKEN")
+	if buildkiteAuthToken == "" {
+		log.Fatal("Please specify BUILDKITE_AUTH_TOKEN")
+	}
 	setupServer()
 }
