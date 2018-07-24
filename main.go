@@ -234,25 +234,44 @@ func vstsHandler(resp http.ResponseWriter, req *http.Request) {
 	}
 
 	buildkitePayload := BuildkitePayload{}
-	buildkitePayload.Commit = payload.Resource.RefUpdates[0].NewObjectID
 
-	refsUpdatesName := payload.Resource.RefUpdates[0].Name
-	buildkitePayload.Branch = strings.Split(refsUpdatesName, "/")[2]
+	// RefUpdates.Name can be:
+	// branch push: /refs/heads/<branch-name>
+	// tag push: /refs/tags/<tag-name>
+	refsUpdatesArr := strings.Split(payload.Resource.RefUpdates[0].Name, "/")
+	gitObjectType := refsUpdatesArr[1]
+	gitObjectName := refsUpdatesArr[2]
+
+	if gitObjectType == "heads" {
+		buildkitePayload.Branch = gitObjectName
+		if payload.Resource.RefUpdates[0].NewObjectID != "0000000000000000000000000000000000000000" {
+			buildkitePayload.Commit = payload.Resource.RefUpdates[0].NewObjectID
+		} else {
+			log.Println("Branch deletion, ignoring.")
+			return
+		}
+	} else {
+		log.Println("Tag pushed, ignoring.")
+		return
+	}
 
 	var (
 		authorName    string
 		authorEmail   string
 		commitMessage string
 	)
-	if buildkitePayload.Branch != "master" {
-		authorName = payload.Resource.Commits[0].Author.Name
-		authorEmail = payload.Resource.Commits[0].Author.Email
-		commitMessage = payload.Resource.Commits[0].Comment
-	} else {
+
+	if len(payload.Resource.Commits) == 0 {
+		// This can happen when a branch is pushed with no new commits to it
+		log.Println("No commit data for branch. Using PushedBy data for build author information")
+		log.Println(string(reqBody))
 		authorName = payload.Resource.PushedBy.DisplayName
 		authorEmail = payload.Resource.PushedBy.UniqueName
 		commitMessage = payload.DetailedMessage.Markdown
-
+	} else {
+		authorName = payload.Resource.Commits[0].Author.Name
+		authorEmail = payload.Resource.Commits[0].Author.Email
+		commitMessage = payload.Resource.Commits[0].Comment
 	}
 
 	buildkitePayload.Author.Name = authorName
